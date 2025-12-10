@@ -9,6 +9,7 @@ using { /UnrealEngine.com/Temporary/SpatialMath }
 #===============================================================================
 # SNOW SIMULATOR - Systeme complet corrige
 #===============================================================================
+# IMPORTANT: Ce fichier doit etre dans Content/[NomProjet]/
 
 #-------------------------------------------------------------------------------
 # ENUMS
