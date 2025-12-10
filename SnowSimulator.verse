@@ -301,15 +301,18 @@ simulator_player<public> := class:
         set TotalCurrencyMult = 1.0 * (1.0 + CurrBonus / 100.0)
 
     CalculateDamageAmount<public>() : float =
+        var Result : float = TotalDamage
         RandomValue := GetRandomFloat(0.0, 100.0)
         if (RandomValue <= CritChance):
-            TotalDamage * CritDamage
-        else:
-            TotalDamage
+            set Result = TotalDamage * CritDamage
+        Result
 
     IsCriticalHit<public>() : logic =
         RandomValue := GetRandomFloat(0.0, 100.0)
-        RandomValue <= CritChance
+        if (RandomValue <= CritChance):
+            true
+        else:
+            false
 
     GainSnow<public>(BaseAmount : float) : float =
         FinalAmount := BaseAmount * TotalCurrencyMult
@@ -319,7 +322,7 @@ simulator_player<public> := class:
     GainXP<public>(Amount : float) : void =
         AddXP(Player, Amount)
 
-var SimulatorPlayers<public> : [player]simulator_player = map{}
+var SimulatorPlayers<public> : weak_map(player, simulator_player) = map{}
 
 GetOrCreateSimulatorPlayer<public>(InPlayer : player) : simulator_player =
     if (ExistingPlayer := SimulatorPlayers[InPlayer]):
@@ -336,12 +339,10 @@ MaybeGetSimulatorPlayer<public>(InPlayer : player) : ?simulator_player =
     else:
         false
 
+# Note: weak_map auto-removes entries when player leaves
 RemoveSimulatorPlayer<public>(InPlayer : player) : void =
-    var NewMap : [player]simulator_player = map{}
-    for (Key -> Value : SimulatorPlayers):
-        if (Key <> InPlayer):
-            if (set NewMap[Key] = Value) {}
-    set SimulatorPlayers = NewMap
+    # weak_map handles cleanup automatically
+    return
 
 #───────────────────────────────────────────────────────────────────────────────
 # BREAKABLE DEVICE - Props cassables
