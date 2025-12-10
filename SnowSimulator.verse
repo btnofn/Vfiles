@@ -267,64 +267,40 @@ AddUnlockedZone<public>(InPlayer : player, ZoneID : int) : void =
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
 IsZoneUnlocked<public>(InPlayer : player, ZoneID : int)<decides><transacts> : void =
-    if (Data := SimulatorPlayerData[InPlayer]):
-        for (UnlockedID : Data.UnlockedZones):
-            if (UnlockedID = ZoneID):
-                return
+    Data := SimulatorPlayerData[InPlayer]
+    var Found : logic = false
+    for (UnlockedID : Data.UnlockedZones):
+        if (UnlockedID = ZoneID):
+            set Found = true
+    Found?
 
 #-------------------------------------------------------------------------------
-# SIMULATOR PLAYER - Classe joueur runtime
+# FONCTIONS JOUEUR - Calculs runtime
 #-------------------------------------------------------------------------------
 
-simulator_player<public> := class:
-    Player<public> : player
+GetTotalDamage<public>(InPlayer : player) : float =
+    DmgBonus := GetBonusDamage(InPlayer)
+    SimulatorConstants.BaseDamage * (1.0 + DmgBonus / 100.0)
 
-    var TotalDamage<public> : float = 1.0
-    var TotalCurrencyMult<public> : float = 1.0
-    var CritChance<public> : float = 0.0
-    var CritDamage<public> : float = 2.0
+GetTotalCurrencyMult<public>(InPlayer : player) : float =
+    CurrBonus := GetBonusCurrency(InPlayer)
+    1.0 * (1.0 + CurrBonus / 100.0)
 
-    Initialize<public>() : void =
-        InitPlayerData(Player)
-        RecalculateStats()
+CalculateDamageForPlayer<public>(InPlayer : player) : float =
+    BaseDamage := GetTotalDamage(InPlayer)
+    BaseDamage
 
-    RecalculateStats<public>() : void =
-        DmgBonus := GetBonusDamage(Player)
-        CurrBonus := GetBonusCurrency(Player)
-        set TotalDamage = SimulatorConstants.BaseDamage * (1.0 + DmgBonus / 100.0)
-        set TotalCurrencyMult = 1.0 * (1.0 + CurrBonus / 100.0)
+GainSnowForPlayer<public>(InPlayer : player, BaseAmount : float) : float =
+    CurrMult := GetTotalCurrencyMult(InPlayer)
+    FinalAmount := BaseAmount * CurrMult
+    AddSnow(InPlayer, FinalAmount)
+    FinalAmount
 
-    CalculateDamageAmount<public>() : float =
-        var Result : float = TotalDamage
-        RandomValue := GetRandomFloat(0.0, 100.0)
-        if (RandomValue <= CritChance):
-            set Result = TotalDamage * CritDamage
-        Result
+GainXPForPlayer<public>(InPlayer : player, Amount : float) : void =
+    AddXP(InPlayer, Amount)
 
-    GainSnow<public>(BaseAmount : float) : float =
-        FinalAmount := BaseAmount * TotalCurrencyMult
-        AddSnow(Player, FinalAmount)
-        FinalAmount
-
-    GainXP<public>(Amount : float) : void =
-        AddXP(Player, Amount)
-
-var SimulatorPlayers<public> : weak_map(player, simulator_player) = map{}
-
-GetOrCreateSimulatorPlayer<public>(InPlayer : player) : simulator_player =
-    if (ExistingPlayer := SimulatorPlayers[InPlayer]):
-        ExistingPlayer
-    else:
-        NewSimPlayer := simulator_player{Player := InPlayer}
-        NewSimPlayer.Initialize()
-        if (set SimulatorPlayers[InPlayer] = NewSimPlayer) {}
-        NewSimPlayer
-
-MaybeGetSimulatorPlayer<public>(InPlayer : player) : ?simulator_player =
-    if (SimPlayer := SimulatorPlayers[InPlayer]):
-        option{SimPlayer}
-    else:
-        false
+InitializeSimulatorPlayer<public>(InPlayer : player) : void =
+    InitPlayerData(InPlayer)
 
 RemoveSimulatorPlayer<public>(InPlayer : player) : void =
     return
@@ -379,17 +355,16 @@ snow_breakable<public> := class(creative_device):
             return
         if (Agent := MaybeAgent?):
             if (InPlayer := player[Agent]):
-                if (SimPlayer := SimulatorPlayers[InPlayer]):
-                    DamageAmount := SimPlayer.CalculateDamageAmount()
-                    set CurrentHealth = CurrentHealth - DamageAmount
-                    UpdateHealthDisplay()
-                    if (CurrentHealth <= 0.0):
-                        DestroyBreakable(SimPlayer)
+                DamageAmount := CalculateDamageForPlayer(InPlayer)
+                set CurrentHealth = CurrentHealth - DamageAmount
+                UpdateHealthDisplay()
+                if (CurrentHealth <= 0.0):
+                    DestroyBreakable(InPlayer)
 
-    DestroyBreakable(SimPlayer : simulator_player) : void =
+    DestroyBreakable(InPlayer : player) : void =
         set IsDestroyed = true
-        SimPlayer.GainSnow(BaseReward)
-        SimPlayer.GainXP(XPReward)
+        GainSnowForPlayer(InPlayer, BaseReward)
+        GainXPForPlayer(InPlayer, XPReward)
         DestroyVFX.Restart()
         HidePosition := OriginalPosition - vector3{Z := 10000.0}
         if (Prop.TeleportTo[HidePosition, OriginalRotation]) {}
@@ -653,9 +628,6 @@ snow_rebirth_shrine<public> := class(creative_device):
 
             DoRebirth(InPlayer, DamageBonus, SpeedBonus, CurrencyBonus)
 
-            if (SimPlayer := SimulatorPlayers[InPlayer]):
-                SimPlayer.RecalculateStats()
-
             RebirthVFX.Restart()
             SuccessHUD.SetText(RebirthSuccessMsg(RebirthLevel))
             SuccessHUD.Show(InPlayer)
@@ -737,8 +709,6 @@ snow_upgrade_station<public> := class(creative_device):
                 set CurrentUpgradeLevel = CurrentUpgradeLevel + 1
                 UpgradeVFX.Restart()
                 UpdateUpgradeDisplay()
-                if (SimPlayer := SimulatorPlayers[InPlayer]):
-                    SimPlayer.RecalculateStats()
             else:
                 CostBillboard.SetText(UpgradeFailMsg)
                 spawn{ResetUpgradeCostDisplay()}
@@ -792,7 +762,7 @@ snow_simulator_main<public> := class(creative_device):
         RemoveSimulatorPlayer(InPlayer)
 
     InitializeNewPlayer(InPlayer : player) : void =
-        SimPlayer := GetOrCreateSimulatorPlayer(InPlayer)
+        InitializeSimulatorPlayer(InPlayer)
 
         TotalEarned := GetTotalSnowEarned(InPlayer)
         if (TotalEarned = 0.0):
