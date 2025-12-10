@@ -7,7 +7,7 @@ using { /UnrealEngine.com/Temporary/Diagnostics }
 using { /UnrealEngine.com/Temporary/SpatialMath }
 
 #═══════════════════════════════════════════════════════════════════════════════
-# SNOW SIMULATOR - Système complet
+# SNOW SIMULATOR - Système complet corrigé
 #═══════════════════════════════════════════════════════════════════════════════
 
 #───────────────────────────────────────────────────────────────────────────────
@@ -21,14 +21,6 @@ pet_rarity<public> := enum:
     Legendary
     Mythic
 
-upgrade_type<public> := enum:
-    Damage
-    Speed
-    CurrencyGain
-    MaxPets
-    CritChance
-    CritDamage
-
 #───────────────────────────────────────────────────────────────────────────────
 # CONSTANTES
 #───────────────────────────────────────────────────────────────────────────────
@@ -37,15 +29,8 @@ SimulatorConstants<public> := module:
     BaseXPPerLevel<public> : float = 100.0
     XPMultiplierPerLevel<public> : float = 1.15
     MaxLevel<public> : int = 100
-    DefaultMaxEquippedPets<public> : int = 3
-    PetFollowDistance<public> : float = 150.0
-    PetFollowSpeed<public> : float = 5.0
-    PetOrbitSpeed<public> : float = 2.0
     BaseDamage<public> : float = 1.0
-    BaseAttackSpeed<public> : float = 1.0
-    CritMultiplierBase<public> : float = 2.0
     BreakableRespawnTime<public> : float = 5.0
-    BaseSnowGain<public> : float = 1.0
 
 #───────────────────────────────────────────────────────────────────────────────
 # FONCTIONS UTILITAIRES
@@ -63,13 +48,17 @@ GetXPForLevel<public>(Level : int) : float =
 
 FormatNumber<public>(Value : float) : string =
     if (Value >= 1000000000.0):
-        "{Floor[Value / 1000000000.0]}B"
-    else if (Value >= 1000000.0):
-        "{Floor[Value / 1000000.0]}M"
-    else if (Value >= 1000.0):
-        "{Floor[Value / 1000.0]}K"
-    else:
-        "{Floor[Value]}"
+        if (Formatted := Floor[Value / 1000000000.0]):
+            return "{Formatted}B"
+    if (Value >= 1000000.0):
+        if (Formatted := Floor[Value / 1000000.0]):
+            return "{Formatted}M"
+    if (Value >= 1000.0):
+        if (Formatted := Floor[Value / 1000.0]):
+            return "{Formatted}K"
+    if (Formatted := Floor[Value]):
+        return "{Formatted}"
+    "0"
 
 GetRarityName<public>(Rarity : pet_rarity) : string =
     case(Rarity):
@@ -84,71 +73,131 @@ GetRarityName<public>(Rarity : pet_rarity) : string =
 #───────────────────────────────────────────────────────────────────────────────
 
 simulator_save_data<public> := class<final><persistable>:
+    Version<public> : int = 1
     Level<public> : int = 1
     CurrentXP<public> : float = 0.0
     Snow<public> : float = 0.0
     TotalSnowEarned<public> : float = 0.0
     RebirthCount<public> : int = 0
-    RebirthDamageBonus<public> : float = 0.0
-    RebirthSpeedBonus<public> : float = 0.0
-    RebirthCurrencyBonus<public> : float = 0.0
+    BonusDamage<public> : float = 0.0
+    BonusSpeed<public> : float = 0.0
+    BonusCurrency<public> : float = 0.0
     UnlockedZones<public> : []int = array{0}
     OwnedPets<public> : []int = array{}
     EquippedPets<public> : []int = array{}
-    UpgradeLevels<public> : []int = array{0, 0, 0, 0, 0, 0}
 
 var SimulatorPlayerData<public> : weak_map(player, simulator_save_data) = map{}
 
-LoadOrCreatePlayerData<public>(InPlayer : player)<transacts> : simulator_save_data =
-    if (ExistingData := SimulatorPlayerData[InPlayer]):
-        ExistingData
-    else:
-        NewData := simulator_save_data{}
-        if (set SimulatorPlayerData[InPlayer] = NewData) {}
-        NewData
+# Charge ou crée les données
+InitPlayerData<public>(InPlayer : player) : void =
+    if (not SimulatorPlayerData[InPlayer]):
+        if (set SimulatorPlayerData[InPlayer] = simulator_save_data{}) {}
 
-GetPlayerData<public>(InPlayer : player) : ?simulator_save_data =
+# Getters simples
+GetSnow<public>(InPlayer : player) : float =
+    var Result : float = 0.0
     if (Data := SimulatorPlayerData[InPlayer]):
-        option{Data}
-    else:
-        false
+        set Result = Data.Snow
+    Result
 
-AddSnow<public>(InPlayer : player, Amount : float)<transacts> : void =
+GetLevel<public>(InPlayer : player) : int =
+    var Result : int = 1
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.Level
+    Result
+
+GetCurrentXP<public>(InPlayer : player) : float =
+    var Result : float = 0.0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.CurrentXP
+    Result
+
+GetRebirthCount<public>(InPlayer : player) : int =
+    var Result : int = 0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.RebirthCount
+    Result
+
+GetBonusDamage<public>(InPlayer : player) : float =
+    var Result : float = 0.0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.BonusDamage
+    Result
+
+GetBonusSpeed<public>(InPlayer : player) : float =
+    var Result : float = 0.0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.BonusSpeed
+    Result
+
+GetBonusCurrency<public>(InPlayer : player) : float =
+    var Result : float = 0.0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.BonusCurrency
+    Result
+
+GetTotalSnowEarned<public>(InPlayer : player) : float =
+    var Result : float = 0.0
+    if (Data := SimulatorPlayerData[InPlayer]):
+        set Result = Data.TotalSnowEarned
+    Result
+
+# Setters
+SetSnow<public>(InPlayer : player, NewValue : float) : void =
     if (CurrentData := SimulatorPlayerData[InPlayer]):
         NewData := simulator_save_data:
+            Version := CurrentData.Version
+            Level := CurrentData.Level
+            CurrentXP := CurrentData.CurrentXP
+            Snow := NewValue
+            TotalSnowEarned := CurrentData.TotalSnowEarned
+            RebirthCount := CurrentData.RebirthCount
+            BonusDamage := CurrentData.BonusDamage
+            BonusSpeed := CurrentData.BonusSpeed
+            BonusCurrency := CurrentData.BonusCurrency
+            UnlockedZones := CurrentData.UnlockedZones
+            OwnedPets := CurrentData.OwnedPets
+            EquippedPets := CurrentData.EquippedPets
+        if (set SimulatorPlayerData[InPlayer] = NewData) {}
+
+AddSnow<public>(InPlayer : player, Amount : float) : void =
+    if (CurrentData := SimulatorPlayerData[InPlayer]):
+        NewData := simulator_save_data:
+            Version := CurrentData.Version
             Level := CurrentData.Level
             CurrentXP := CurrentData.CurrentXP
             Snow := CurrentData.Snow + Amount
             TotalSnowEarned := CurrentData.TotalSnowEarned + Amount
             RebirthCount := CurrentData.RebirthCount
-            RebirthDamageBonus := CurrentData.RebirthDamageBonus
-            RebirthSpeedBonus := CurrentData.RebirthSpeedBonus
-            RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus
+            BonusDamage := CurrentData.BonusDamage
+            BonusSpeed := CurrentData.BonusSpeed
+            BonusCurrency := CurrentData.BonusCurrency
             UnlockedZones := CurrentData.UnlockedZones
             OwnedPets := CurrentData.OwnedPets
             EquippedPets := CurrentData.EquippedPets
-            UpgradeLevels := CurrentData.UpgradeLevels
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
-RemoveSnow<public>(InPlayer : player, Amount : float)<transacts><decides> : void =
-    CurrentData := SimulatorPlayerData[InPlayer]
-    CurrentData.Snow >= Amount
-    NewData := simulator_save_data:
-        Level := CurrentData.Level
-        CurrentXP := CurrentData.CurrentXP
-        Snow := CurrentData.Snow - Amount
-        TotalSnowEarned := CurrentData.TotalSnowEarned
-        RebirthCount := CurrentData.RebirthCount
-        RebirthDamageBonus := CurrentData.RebirthDamageBonus
-        RebirthSpeedBonus := CurrentData.RebirthSpeedBonus
-        RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus
-        UnlockedZones := CurrentData.UnlockedZones
-        OwnedPets := CurrentData.OwnedPets
-        EquippedPets := CurrentData.EquippedPets
-        UpgradeLevels := CurrentData.UpgradeLevels
-    if (set SimulatorPlayerData[InPlayer] = NewData) {}
+TryRemoveSnow<public>(InPlayer : player, Amount : float) : logic =
+    if (CurrentData := SimulatorPlayerData[InPlayer]):
+        if (CurrentData.Snow >= Amount):
+            NewData := simulator_save_data:
+                Version := CurrentData.Version
+                Level := CurrentData.Level
+                CurrentXP := CurrentData.CurrentXP
+                Snow := CurrentData.Snow - Amount
+                TotalSnowEarned := CurrentData.TotalSnowEarned
+                RebirthCount := CurrentData.RebirthCount
+                BonusDamage := CurrentData.BonusDamage
+                BonusSpeed := CurrentData.BonusSpeed
+                BonusCurrency := CurrentData.BonusCurrency
+                UnlockedZones := CurrentData.UnlockedZones
+                OwnedPets := CurrentData.OwnedPets
+                EquippedPets := CurrentData.EquippedPets
+            if (set SimulatorPlayerData[InPlayer] = NewData) {}
+            return true
+    false
 
-AddXP<public>(InPlayer : player, Amount : float)<transacts> : void =
+AddXP<public>(InPlayer : player, Amount : float) : void =
     if (CurrentData := SimulatorPlayerData[InPlayer]):
         var NewXP : float = CurrentData.CurrentXP + Amount
         var NewLevel : int = CurrentData.Level
@@ -157,69 +206,69 @@ AddXP<public>(InPlayer : player, Amount : float)<transacts> : void =
             set NewXP = NewXP - XPRequired
             set NewLevel = NewLevel + 1
         NewData := simulator_save_data:
+            Version := CurrentData.Version
             Level := NewLevel
             CurrentXP := NewXP
             Snow := CurrentData.Snow
             TotalSnowEarned := CurrentData.TotalSnowEarned
             RebirthCount := CurrentData.RebirthCount
-            RebirthDamageBonus := CurrentData.RebirthDamageBonus
-            RebirthSpeedBonus := CurrentData.RebirthSpeedBonus
-            RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus
+            BonusDamage := CurrentData.BonusDamage
+            BonusSpeed := CurrentData.BonusSpeed
+            BonusCurrency := CurrentData.BonusCurrency
             UnlockedZones := CurrentData.UnlockedZones
             OwnedPets := CurrentData.OwnedPets
             EquippedPets := CurrentData.EquippedPets
-            UpgradeLevels := CurrentData.UpgradeLevels
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
-AddPet<public>(InPlayer : player, PetID : int)<transacts> : void =
+AddPet<public>(InPlayer : player, PetID : int) : void =
     if (CurrentData := SimulatorPlayerData[InPlayer]):
         NewData := simulator_save_data:
+            Version := CurrentData.Version
             Level := CurrentData.Level
             CurrentXP := CurrentData.CurrentXP
             Snow := CurrentData.Snow
             TotalSnowEarned := CurrentData.TotalSnowEarned
             RebirthCount := CurrentData.RebirthCount
-            RebirthDamageBonus := CurrentData.RebirthDamageBonus
-            RebirthSpeedBonus := CurrentData.RebirthSpeedBonus
-            RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus
+            BonusDamage := CurrentData.BonusDamage
+            BonusSpeed := CurrentData.BonusSpeed
+            BonusCurrency := CurrentData.BonusCurrency
             UnlockedZones := CurrentData.UnlockedZones
             OwnedPets := CurrentData.OwnedPets + array{PetID}
             EquippedPets := CurrentData.EquippedPets
-            UpgradeLevels := CurrentData.UpgradeLevels
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
-PerformRebirth<public>(InPlayer : player, DmgBonus : float, SpdBonus : float, CurrBonus : float)<transacts> : void =
+DoRebirth<public>(InPlayer : player, AddDmg : float, AddSpd : float, AddCurr : float) : void =
     if (CurrentData := SimulatorPlayerData[InPlayer]):
         NewData := simulator_save_data:
+            Version := CurrentData.Version
             Level := 1
             CurrentXP := 0.0
             Snow := 0.0
             TotalSnowEarned := CurrentData.TotalSnowEarned
             RebirthCount := CurrentData.RebirthCount + 1
-            RebirthDamageBonus := CurrentData.RebirthDamageBonus + DmgBonus
-            RebirthSpeedBonus := CurrentData.RebirthSpeedBonus + SpdBonus
-            RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus + CurrBonus
+            BonusDamage := CurrentData.BonusDamage + AddDmg
+            BonusSpeed := CurrentData.BonusSpeed + AddSpd
+            BonusCurrency := CurrentData.BonusCurrency + AddCurr
             UnlockedZones := array{0}
             OwnedPets := CurrentData.OwnedPets
             EquippedPets := CurrentData.EquippedPets
-            UpgradeLevels := array{0, 0, 0, 0, 0, 0}
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
-UnlockZone<public>(InPlayer : player, ZoneID : int)<transacts> : void =
+AddUnlockedZone<public>(InPlayer : player, ZoneID : int) : void =
     if (CurrentData := SimulatorPlayerData[InPlayer]):
         NewData := simulator_save_data:
+            Version := CurrentData.Version
             Level := CurrentData.Level
             CurrentXP := CurrentData.CurrentXP
             Snow := CurrentData.Snow
             TotalSnowEarned := CurrentData.TotalSnowEarned
             RebirthCount := CurrentData.RebirthCount
-            RebirthDamageBonus := CurrentData.RebirthDamageBonus
-            RebirthSpeedBonus := CurrentData.RebirthSpeedBonus
-            RebirthCurrencyBonus := CurrentData.RebirthCurrencyBonus
+            BonusDamage := CurrentData.BonusDamage
+            BonusSpeed := CurrentData.BonusSpeed
+            BonusCurrency := CurrentData.BonusCurrency
             UnlockedZones := CurrentData.UnlockedZones + array{ZoneID}
             OwnedPets := CurrentData.OwnedPets
             EquippedPets := CurrentData.EquippedPets
-            UpgradeLevels := CurrentData.UpgradeLevels
         if (set SimulatorPlayerData[InPlayer] = NewData) {}
 
 IsZoneUnlocked<public>(InPlayer : player, ZoneID : int) : logic =
@@ -229,30 +278,6 @@ IsZoneUnlocked<public>(InPlayer : player, ZoneID : int) : logic =
                 return true
     false
 
-GetSnow<public>(InPlayer : player) : float =
-    if (Data := SimulatorPlayerData[InPlayer]):
-        Data.Snow
-    else:
-        0.0
-
-GetLevel<public>(InPlayer : player) : int =
-    if (Data := SimulatorPlayerData[InPlayer]):
-        Data.Level
-    else:
-        1
-
-GetRebirthCount<public>(InPlayer : player) : int =
-    if (Data := SimulatorPlayerData[InPlayer]):
-        Data.RebirthCount
-    else:
-        0
-
-GetRebirthBonuses<public>(InPlayer : player) : tuple(DmgBonus : float, SpdBonus : float, CurrBonus : float) =
-    if (Data := SimulatorPlayerData[InPlayer]):
-        (DmgBonus := Data.RebirthDamageBonus, SpdBonus := Data.RebirthSpeedBonus, CurrBonus := Data.RebirthCurrencyBonus)
-    else:
-        (DmgBonus := 0.0, SpdBonus := 0.0, CurrBonus := 0.0)
-
 #───────────────────────────────────────────────────────────────────────────────
 # SIMULATOR PLAYER - Classe joueur runtime
 #───────────────────────────────────────────────────────────────────────────────
@@ -261,32 +286,37 @@ simulator_player<public> := class:
     Player<public> : player
 
     var TotalDamage<public> : float = 1.0
-    var TotalCurrencyMultiplier<public> : float = 1.0
+    var TotalCurrencyMult<public> : float = 1.0
     var CritChance<public> : float = 0.0
     var CritDamage<public> : float = 2.0
 
-    Initialize<public>()<transacts> : void =
-        LoadOrCreatePlayerData(Player)
+    Initialize<public>() : void =
+        InitPlayerData(Player)
         RecalculateStats()
 
     RecalculateStats<public>() : void =
-        Bonuses := GetRebirthBonuses(Player)
-        set TotalDamage = SimulatorConstants.BaseDamage * (1.0 + Bonuses.DmgBonus / 100.0)
-        set TotalCurrencyMultiplier = 1.0 * (1.0 + Bonuses.CurrBonus / 100.0)
+        DmgBonus := GetBonusDamage(Player)
+        CurrBonus := GetBonusCurrency(Player)
+        set TotalDamage = SimulatorConstants.BaseDamage * (1.0 + DmgBonus / 100.0)
+        set TotalCurrencyMult = 1.0 * (1.0 + CurrBonus / 100.0)
 
-    CalculateDamage<public>() : tuple(Damage : float, IsCrit : logic) =
+    CalculateDamageAmount<public>() : float =
         RandomValue := GetRandomFloat(0.0, 100.0)
         if (RandomValue <= CritChance):
-            (Damage := TotalDamage * CritDamage, IsCrit := true)
+            TotalDamage * CritDamage
         else:
-            (Damage := TotalDamage, IsCrit := false)
+            TotalDamage
 
-    GainSnow<public>(BaseAmount : float)<transacts> : float =
-        FinalAmount := BaseAmount * TotalCurrencyMultiplier
+    IsCriticalHit<public>() : logic =
+        RandomValue := GetRandomFloat(0.0, 100.0)
+        RandomValue <= CritChance
+
+    GainSnow<public>(BaseAmount : float) : float =
+        FinalAmount := BaseAmount * TotalCurrencyMult
         AddSnow(Player, FinalAmount)
         FinalAmount
 
-    GainXP<public>(Amount : float)<transacts> : void =
+    GainXP<public>(Amount : float) : void =
         AddXP(Player, Amount)
 
 var SimulatorPlayers<public> : [player]simulator_player = map{}
@@ -300,7 +330,7 @@ GetOrCreateSimulatorPlayer<public>(InPlayer : player) : simulator_player =
         if (set SimulatorPlayers[InPlayer] = NewSimPlayer) {}
         NewSimPlayer
 
-GetSimulatorPlayer<public>(InPlayer : player) : ?simulator_player =
+MaybeGetSimulatorPlayer<public>(InPlayer : player) : ?simulator_player =
     if (SimPlayer := SimulatorPlayers[InPlayer]):
         option{SimPlayer}
     else:
@@ -363,9 +393,9 @@ snow_breakable<public> := class(creative_device):
             return
         if (Agent := MaybeAgent?):
             if (InPlayer := player[Agent]):
-                if (SimPlayer := GetSimulatorPlayer(InPlayer)):
-                    DamageResult := SimPlayer.CalculateDamage()
-                    set CurrentHealth = CurrentHealth - DamageResult.Damage
+                if (SimPlayer := MaybeGetSimulatorPlayer(InPlayer)?):
+                    DamageAmount := SimPlayer.CalculateDamageAmount()
+                    set CurrentHealth = CurrentHealth - DamageAmount
                     UpdateHealthDisplay()
                     if (CurrentHealth <= 0.0):
                         DestroyBreakable(SimPlayer)
@@ -440,7 +470,7 @@ snow_egg_station<public> := class(creative_device):
         if (IsHatching?):
             return
         if (InPlayer := player[Agent]):
-            if (RemoveSnow(InPlayer, Cost)):
+            if (TryRemoveSnow(InPlayer, Cost)):
                 spawn{PerformHatch(InPlayer)}
 
     PerformHatch(InPlayer : player)<suspends> : void =
@@ -534,8 +564,8 @@ snow_zone_gate<public> := class(creative_device):
         if (InPlayer := player[Agent]):
             Level := GetLevel(InPlayer)
             if (Level >= RequiredLevel):
-                if (RemoveSnow(InPlayer, UnlockCost)):
-                    UnlockZone(InPlayer, ZoneID)
+                if (TryRemoveSnow(InPlayer, UnlockCost)):
+                    AddUnlockedZone(InPlayer, ZoneID)
                     UnlockGateFor(InPlayer)
                 else:
                     InfoBillboard.SetText(LockedMsg)
@@ -600,7 +630,7 @@ snow_rebirth_shrine<public> := class(creative_device):
     @editable
     TeleportAfter : teleporter_device = teleporter_device{}
 
-    CostMsg<localizes>(SnowCost : float, LvlReq : int) : message = "Cost: {SnowCost} Snow | Level {LvlReq}"
+    CostMsg<localizes>(SnowCost : float, LvlReq : int) : message = "Cost: {SnowCost} | Level {LvlReq}"
     BonusMsg<localizes>(DMG : float, SPD : float, CURR : float) : message = "+{DMG}% DMG | +{SPD}% Speed | +{CURR}% Snow"
     SuccessMsg<localizes>(Lvl : int) : message = "REBIRTH {Lvl} Complete!"
     FailMsg<localizes> : message = "Requirements not met!"
@@ -634,9 +664,9 @@ snow_rebirth_shrine<public> := class(creative_device):
                 spawn{ResetDisplay()}
                 return
 
-            PerformRebirth(InPlayer, DamageBonus, SpeedBonus, CurrencyBonus)
+            DoRebirth(InPlayer, DamageBonus, SpeedBonus, CurrencyBonus)
 
-            if (SimPlayer := GetSimulatorPlayer(InPlayer)):
+            if (SimPlayer := MaybeGetSimulatorPlayer(InPlayer)?):
                 SimPlayer.RecalculateStats()
 
             RebirthVFX.Restart()
@@ -716,11 +746,11 @@ snow_upgrade_station<public> := class(creative_device):
             return
         if (InPlayer := player[Agent]):
             UpgradeCost := CalculateCost()
-            if (RemoveSnow(InPlayer, UpgradeCost)):
+            if (TryRemoveSnow(InPlayer, UpgradeCost)):
                 set CurrentLevel = CurrentLevel + 1
                 UpgradeVFX.Restart()
                 UpdateDisplay()
-                if (SimPlayer := GetSimulatorPlayer(InPlayer)):
+                if (SimPlayer := MaybeGetSimulatorPlayer(InPlayer)?):
                     SimPlayer.RecalculateStats()
             else:
                 CostBillboard.SetText(FailMsg)
@@ -752,7 +782,7 @@ snow_simulator_main<public> := class(creative_device):
     HUDUpdateInterval : float = 0.2
 
     SnowMsg<localizes>(Amount : string) : message = "Snow: {Amount}"
-    LevelMsg<localizes>(Lvl : int, XP : int, XPMax : int) : message = "Level {Lvl} | XP: {XP}/{XPMax}"
+    LevelMsg<localizes>(Lvl : int, XP : string, XPMax : string) : message = "Level {Lvl} | XP: {XP}/{XPMax}"
     RebirthMsg<localizes>(Count : int) : message = "Rebirth: {Count}"
 
     OnBegin<override>()<suspends> : void =
@@ -777,10 +807,10 @@ snow_simulator_main<public> := class(creative_device):
     InitializePlayer(InPlayer : player) : void =
         SimPlayer := GetOrCreateSimulatorPlayer(InPlayer)
 
-        if (Data := GetPlayerData(InPlayer)):
-            if (Data.TotalSnowEarned = 0.0):
-                if (StartingSnow > 0.0):
-                    AddSnow(InPlayer, StartingSnow)
+        TotalEarned := GetTotalSnowEarned(InPlayer)
+        if (TotalEarned = 0.0):
+            if (StartingSnow > 0.0):
+                AddSnow(InPlayer, StartingSnow)
 
     HUDUpdateLoop()<suspends> : void =
         loop:
@@ -789,16 +819,20 @@ snow_simulator_main<public> := class(creative_device):
                 UpdatePlayerHUD(InPlayer)
 
     UpdatePlayerHUD(InPlayer : player) : void =
-        if (Data := GetPlayerData(InPlayer)):
-            SnowFormatted := FormatNumber(Data.Snow)
-            SnowHUD.SetText(SnowMsg(SnowFormatted))
-            SnowHUD.Show(InPlayer)
+        CurrentSnow := GetSnow(InPlayer)
+        CurrentLevel := GetLevel(InPlayer)
+        CurrentXP := GetCurrentXP(InPlayer)
+        CurrentRebirths := GetRebirthCount(InPlayer)
 
-            XPRequired := GetXPForLevel(Data.Level)
-            if (XPInt := Int[Data.CurrentXP]):
-                if (XPReqInt := Int[XPRequired]):
-                    LevelHUD.SetText(LevelMsg(Data.Level, XPInt, XPReqInt))
-                    LevelHUD.Show(InPlayer)
+        SnowFormatted := FormatNumber(CurrentSnow)
+        SnowHUD.SetText(SnowMsg(SnowFormatted))
+        SnowHUD.Show(InPlayer)
 
-            RebirthHUD.SetText(RebirthMsg(Data.RebirthCount))
-            RebirthHUD.Show(InPlayer)
+        XPRequired := GetXPForLevel(CurrentLevel)
+        XPStr := FormatNumber(CurrentXP)
+        XPMaxStr := FormatNumber(XPRequired)
+        LevelHUD.SetText(LevelMsg(CurrentLevel, XPStr, XPMaxStr))
+        LevelHUD.Show(InPlayer)
+
+        RebirthHUD.SetText(RebirthMsg(CurrentRebirths))
+        RebirthHUD.Show(InPlayer)
