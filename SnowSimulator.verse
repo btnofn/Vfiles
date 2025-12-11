@@ -445,7 +445,7 @@ snow_egg_stations_manager<public> := class(creative_device):
     MythicChance : float = 0.01
 
     @editable
-    ResultHUD : hud_message_device = hud_message_device{}
+    ResultHUD : ?hud_message_device = false
 
     var StationStates : []egg_station_data = array{}
 
@@ -507,8 +507,9 @@ snow_egg_stations_manager<public> := class(creative_device):
         AddPet(InPlayer, PetID)
 
         RarityStr := GetRarityName(SelectedRarity)
-        ResultHUD.SetText(ResultMsg(RarityStr))
-        ResultHUD.Show(InPlayer)
+        if (HUD := ResultHUD?):
+            HUD.SetText(ResultMsg(RarityStr))
+            HUD.Show(InPlayer)
 
         set State.IsHatching = false
         State.TheBillboard.SetText(CostMsg(EggCost))
@@ -682,10 +683,10 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
     RebirthVFXs : []vfx_spawner_device = array{}
 
     @editable
-    SuccessHUD : hud_message_device = hud_message_device{}
+    SuccessHUD : ?hud_message_device = false
 
     @editable
-    TeleportAfter : teleporter_device = teleporter_device{}
+    TeleportAfter : ?teleporter_device = false
 
     var ShrineStates : []rebirth_shrine_data = array{}
 
@@ -753,9 +754,11 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
                                 if (CurrentSnow >= State.RequiredSnow):
                                     DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
                                     State.TheVFX.Restart()
-                                    SuccessHUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
-                                    SuccessHUD.Show(InPlayer)
-                                    TeleportAfter.Teleport(InPlayer)
+                                    if (HUD := SuccessHUD?):
+                                        HUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
+                                        HUD.Show(InPlayer)
+                                    if (TP := TeleportAfter?):
+                                        TP.Teleport(InPlayer)
                                     set Handled = true
                                 else:
                                     State.TheCostBillboard.SetText(RebirthFailMsg)
@@ -909,13 +912,13 @@ snow_upgrade_stations_manager<public> := class(creative_device):
 snow_simulator_main<public> := class(creative_device):
 
     @editable
-    SnowHUD : hud_message_device = hud_message_device{}
+    SnowHUD : ?hud_message_device = false
 
     @editable
-    LevelHUD : hud_message_device = hud_message_device{}
+    LevelHUD : ?hud_message_device = false
 
     @editable
-    RebirthHUD : hud_message_device = hud_message_device{}
+    RebirthHUD : ?hud_message_device = false
 
     @editable
     StartingSnow : float = 0.0
@@ -967,14 +970,17 @@ snow_simulator_main<public> := class(creative_device):
         CurrentRebirths := GetRebirthCount(InPlayer)
 
         SnowFormatted := FormatNumber(CurrentSnow)
-        SnowHUD.SetText(MainSnowMsg(SnowFormatted))
-        SnowHUD.Show(InPlayer)
+        if (SH := SnowHUD?):
+            SH.SetText(MainSnowMsg(SnowFormatted))
+            SH.Show(InPlayer)
 
         XPRequired := GetXPForLevel(CurrentLevel)
         XPStr := FormatNumber(CurrentXP)
         XPMaxStr := FormatNumber(XPRequired)
-        LevelHUD.SetText(MainLevelMsg(CurrentLevel, XPStr, XPMaxStr))
-        LevelHUD.Show(InPlayer)
+        if (LH := LevelHUD?):
+            LH.SetText(MainLevelMsg(CurrentLevel, XPStr, XPMaxStr))
+            LH.Show(InPlayer)
 
-        RebirthHUD.SetText(MainRebirthMsg(CurrentRebirths))
-        RebirthHUD.Show(InPlayer)
+        if (RH := RebirthHUD?):
+            RH.SetText(MainRebirthMsg(CurrentRebirths))
+            RH.Show(InPlayer)
