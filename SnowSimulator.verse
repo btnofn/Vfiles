@@ -397,6 +397,9 @@ snow_simulator_manager := class(creative_device):
         if (TotalEarned = 0.0):
             if (StartingSnow > 0.0):
                 AddSnow(InPlayer, StartingSnow)
+        # Check zones for this player
+        for (Gate : ZoneGates):
+            Gate.CheckPlayerUnlock(InPlayer)
 
     HUDUpdateLoop()<suspends> : void =
         loop:
@@ -629,9 +632,6 @@ snow_zone_config<public> := class<concrete>:
         set OriginalPosition = GateProp.GetTransform().Translation
         InfoBillboard.SetText(CostInfoMsg(UnlockCost, RequiredLevel))
         UnlockButton.InteractedWithEvent.Subscribe(OnUnlockAttempt)
-        for (InPlayer : GetPlayspace().GetPlayers()):
-            CheckPlayerUnlock(InPlayer)
-        GetPlayspace().PlayerAddedEvent().Subscribe(CheckPlayerUnlock)
 
     OnUnlockAttempt(Agent : agent) : void =
         if (not IsUnlocked?):
@@ -645,7 +645,7 @@ snow_zone_config<public> := class<concrete>:
                     InfoBillboard.SetText(LockedInfoMsg)
                     spawn{ResetInfoDisplay()}
 
-    CheckPlayerUnlock(InPlayer : player) : void =
+    CheckPlayerUnlock<public>(InPlayer : player) : void =
         if (IsZoneUnlocked[InPlayer, ZoneID]):
             OpenGate()
 
