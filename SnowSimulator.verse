@@ -738,31 +738,29 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
                 CurrentLevel := GetLevel(InPlayer)
                 CurrentSnow := GetSnow(InPlayer)
 
-                if (CurrentRebirths >= State.RebirthLevel):
-                    continue
-
-                ExpectedRebirths := State.RebirthLevel - 1
-                if (CurrentRebirths <> ExpectedRebirths):
-                    State.TheCostBillboard.SetText(RebirthFailMsg)
-                    spawn{ResetRebirthDisplayFor(State)}
-                    break
-
-                if (CurrentLevel < State.RequiredPlayerLevel):
-                    State.TheCostBillboard.SetText(RebirthFailMsg)
-                    spawn{ResetRebirthDisplayFor(State)}
-                    break
-
-                if (CurrentSnow < State.RequiredSnow):
-                    State.TheCostBillboard.SetText(RebirthFailMsg)
-                    spawn{ResetRebirthDisplayFor(State)}
-                    break
-
-                DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
-                State.TheVFX.Restart()
-                SuccessHUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
-                SuccessHUD.Show(InPlayer)
-                TeleportAfter.Teleport(InPlayer)
-                break
+                if (CurrentRebirths < State.RebirthLevel):
+                    ExpectedRebirths := State.RebirthLevel - 1
+                    if (CurrentRebirths = ExpectedRebirths):
+                        if (CurrentLevel >= State.RequiredPlayerLevel):
+                            if (CurrentSnow >= State.RequiredSnow):
+                                DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
+                                State.TheVFX.Restart()
+                                SuccessHUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
+                                SuccessHUD.Show(InPlayer)
+                                TeleportAfter.Teleport(InPlayer)
+                                break
+                            else:
+                                State.TheCostBillboard.SetText(RebirthFailMsg)
+                                spawn{ResetRebirthDisplayFor(State)}
+                                break
+                        else:
+                            State.TheCostBillboard.SetText(RebirthFailMsg)
+                            spawn{ResetRebirthDisplayFor(State)}
+                            break
+                    else:
+                        State.TheCostBillboard.SetText(RebirthFailMsg)
+                        spawn{ResetRebirthDisplayFor(State)}
+                        break
 
     ResetRebirthDisplayFor(State : rebirth_shrine_data)<suspends> : void =
         Sleep(2.0)
