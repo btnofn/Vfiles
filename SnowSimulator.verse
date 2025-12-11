@@ -318,12 +318,9 @@ snow_breakable<public> := class(creative_device):
     @editable
     DestroyVFX : vfx_spawner_device = vfx_spawner_device{}
 
-    # Affichage PV - Choisir billboard OU material controller
+    # Affichage PV via billboard (optionnel)
     @editable
     HealthBillboard : ?billboard_device = false
-
-    @editable
-    HealthMaterialController : ?material_parameter_controller_device = false
 
     # Stats configurables par instance
     @editable
@@ -375,13 +372,8 @@ snow_breakable<public> := class(creative_device):
     UpdateHealthDisplay() : void =
         if (HP := Int[CurrentHealth]):
             if (MaxHP := Int[MaxHealth]):
-                # Option 1: Billboard
                 if (BB := HealthBillboard?):
                     BB.SetText(HealthMsg(HP, MaxHP))
-                # Option 2: Material controller (valeur 0.0 a 1.0)
-                if (MC := HealthMaterialController?):
-                    HealthPercent := CurrentHealth / MaxHealth
-                    MC.SetScalarParameterValue(HealthPercent)
 
 #===============================================================================
 # SNOW EGG STATION - 1 Device = 1 Station d'oeufs
