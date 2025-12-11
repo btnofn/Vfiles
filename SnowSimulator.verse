@@ -374,14 +374,16 @@ snow_breakables_manager<public> := class(creative_device):
     OnAnyDamage(MaybeAgent : ?agent) : void =
         if (Agent := MaybeAgent?):
             if (InPlayer := player[Agent]):
+                var Handled : logic = false
                 for (State : BreakableStates):
-                    if (not State.IsDestroyed?):
-                        DamageAmount := CalculateDamageForPlayer(InPlayer)
-                        set State.CurrentHealth = State.CurrentHealth - DamageAmount
-                        UpdateHealthDisplayFor(State)
-                        if (State.CurrentHealth <= 0.0):
-                            DestroyBreakableFor(State, InPlayer)
-                        break
+                    if (not Handled?):
+                        if (not State.IsDestroyed?):
+                            DamageAmount := CalculateDamageForPlayer(InPlayer)
+                            set State.CurrentHealth = State.CurrentHealth - DamageAmount
+                            UpdateHealthDisplayFor(State)
+                            if (State.CurrentHealth <= 0.0):
+                                DestroyBreakableFor(State, InPlayer)
+                            set Handled = true
 
     DestroyBreakableFor(State : breakable_data, InPlayer : player) : void =
         set State.IsDestroyed = true
@@ -466,12 +468,14 @@ snow_egg_stations_manager<public> := class(creative_device):
             set Index = Index + 1
 
     OnAnyPurchase(Agent : agent) : void =
+        var Handled : logic = false
         for (State : StationStates):
-            if (not State.IsHatching?):
-                if (InPlayer := player[Agent]):
-                    if (TryRemoveSnow[InPlayer, EggCost]):
-                        spawn{PerformHatchFor(State, InPlayer)}
-                        break
+            if (not Handled?):
+                if (not State.IsHatching?):
+                    if (InPlayer := player[Agent]):
+                        if (TryRemoveSnow[InPlayer, EggCost]):
+                            spawn{PerformHatchFor(State, InPlayer)}
+                            set Handled = true
 
     PerformHatchFor(State : egg_station_data, InPlayer : player)<suspends> : void =
         set State.IsHatching = true
@@ -595,18 +599,20 @@ snow_zone_gates_manager<public> := class(creative_device):
 
     OnAnyUnlockAttempt(Agent : agent) : void =
         if (InPlayer := player[Agent]):
+            var Handled : logic = false
             for (State : GateStates):
-                if (not State.IsUnlocked?):
-                    PlayerLevel := GetLevel(InPlayer)
-                    if (PlayerLevel >= State.RequiredLevel):
-                        if (TryRemoveSnow[InPlayer, State.UnlockCost]):
-                            AddUnlockedZone(InPlayer, State.ZoneID)
-                            UnlockGateFor(State, InPlayer)
-                            break
-                    else:
-                        State.TheBillboard.SetText(LockedInfoMsg)
-                        spawn{ResetInfoDisplayFor(State)}
-                        break
+                if (not Handled?):
+                    if (not State.IsUnlocked?):
+                        PlayerLevel := GetLevel(InPlayer)
+                        if (PlayerLevel >= State.RequiredLevel):
+                            if (TryRemoveSnow[InPlayer, State.UnlockCost]):
+                                AddUnlockedZone(InPlayer, State.ZoneID)
+                                UnlockGateFor(State, InPlayer)
+                                set Handled = true
+                        else:
+                            State.TheBillboard.SetText(LockedInfoMsg)
+                            spawn{ResetInfoDisplayFor(State)}
+                            set Handled = true
 
     CheckAllPlayerUnlocks(InPlayer : player) : void =
         for (State : GateStates):
@@ -733,34 +739,36 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
 
     OnAnyRebirthAttempt(Agent : agent) : void =
         if (InPlayer := player[Agent]):
+            var Handled : logic = false
             for (State : ShrineStates):
-                CurrentRebirths := GetRebirthCount(InPlayer)
-                CurrentLevel := GetLevel(InPlayer)
-                CurrentSnow := GetSnow(InPlayer)
+                if (not Handled?):
+                    CurrentRebirths := GetRebirthCount(InPlayer)
+                    CurrentLevel := GetLevel(InPlayer)
+                    CurrentSnow := GetSnow(InPlayer)
 
-                if (CurrentRebirths < State.RebirthLevel):
-                    ExpectedRebirths := State.RebirthLevel - 1
-                    if (CurrentRebirths = ExpectedRebirths):
-                        if (CurrentLevel >= State.RequiredPlayerLevel):
-                            if (CurrentSnow >= State.RequiredSnow):
-                                DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
-                                State.TheVFX.Restart()
-                                SuccessHUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
-                                SuccessHUD.Show(InPlayer)
-                                TeleportAfter.Teleport(InPlayer)
-                                break
+                    if (CurrentRebirths < State.RebirthLevel):
+                        ExpectedRebirths := State.RebirthLevel - 1
+                        if (CurrentRebirths = ExpectedRebirths):
+                            if (CurrentLevel >= State.RequiredPlayerLevel):
+                                if (CurrentSnow >= State.RequiredSnow):
+                                    DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
+                                    State.TheVFX.Restart()
+                                    SuccessHUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
+                                    SuccessHUD.Show(InPlayer)
+                                    TeleportAfter.Teleport(InPlayer)
+                                    set Handled = true
+                                else:
+                                    State.TheCostBillboard.SetText(RebirthFailMsg)
+                                    spawn{ResetRebirthDisplayFor(State)}
+                                    set Handled = true
                             else:
                                 State.TheCostBillboard.SetText(RebirthFailMsg)
                                 spawn{ResetRebirthDisplayFor(State)}
-                                break
+                                set Handled = true
                         else:
                             State.TheCostBillboard.SetText(RebirthFailMsg)
                             spawn{ResetRebirthDisplayFor(State)}
-                            break
-                    else:
-                        State.TheCostBillboard.SetText(RebirthFailMsg)
-                        spawn{ResetRebirthDisplayFor(State)}
-                        break
+                            set Handled = true
 
     ResetRebirthDisplayFor(State : rebirth_shrine_data)<suspends> : void =
         Sleep(2.0)
@@ -857,18 +865,20 @@ snow_upgrade_stations_manager<public> := class(creative_device):
 
     OnAnyUpgradePurchase(Agent : agent) : void =
         if (InPlayer := player[Agent]):
+            var Handled : logic = false
             for (State : UpgradeStates):
-                if (State.CurrentLevel < State.MaxLevel):
-                    TheCost := CalculateCostFor(State)
-                    if (TryRemoveSnow[InPlayer, TheCost]):
-                        set State.CurrentLevel = State.CurrentLevel + 1
-                        State.TheVFX.Restart()
-                        UpdateUpgradeDisplayFor(State)
-                        break
-                    else:
-                        State.TheCostBillboard.SetText(UpgradeFailMsg)
-                        spawn{ResetUpgradeCostDisplayFor(State)}
-                        break
+                if (not Handled?):
+                    if (State.CurrentLevel < State.MaxLevel):
+                        TheCost := CalculateCostFor(State)
+                        if (TryRemoveSnow[InPlayer, TheCost]):
+                            set State.CurrentLevel = State.CurrentLevel + 1
+                            State.TheVFX.Restart()
+                            UpdateUpgradeDisplayFor(State)
+                            set Handled = true
+                        else:
+                            State.TheCostBillboard.SetText(UpgradeFailMsg)
+                            spawn{ResetUpgradeCostDisplayFor(State)}
+                            set Handled = true
 
     CalculateCostFor(State : upgrade_station_data) : float =
         var Result : float = State.BaseCost
