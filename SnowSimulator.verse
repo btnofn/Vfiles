@@ -7,9 +7,9 @@ using { /UnrealEngine.com/Temporary/Diagnostics }
 using { /UnrealEngine.com/Temporary/SpatialMath }
 
 #===============================================================================
-# SNOW SIMULATOR - Systeme complet corrige
+# SNOW SIMULATOR - Architecture 1 Device = 1 Instance
 #===============================================================================
-# IMPORTANT: Ce fichier doit etre dans Content/[NomProjet]/
+# Chaque device controle UNE seule instance configurable individuellement
 
 #-------------------------------------------------------------------------------
 # ENUMS
@@ -31,7 +31,6 @@ SimulatorConstants<public> := module:
     XPMultiplierPerLevel<public> : float = 1.15
     MaxLevel<public> : int = 100
     BaseDamage<public> : float = 1.0
-    BreakableRespawnTime<public> : float = 5.0
 
 #-------------------------------------------------------------------------------
 # FONCTIONS UTILITAIRES
@@ -288,8 +287,7 @@ GetTotalCurrencyMult<public>(InPlayer : player) : float =
     1.0 * (1.0 + CurrBonus / 100.0)
 
 CalculateDamageForPlayer<public>(InPlayer : player) : float =
-    BaseDamage := GetTotalDamage(InPlayer)
-    BaseDamage
+    GetTotalDamage(InPlayer)
 
 GainSnowForPlayer<public>(InPlayer : player, BaseAmount : float) : float =
     CurrMult := GetTotalCurrencyMult(InPlayer)
@@ -306,38 +304,33 @@ InitializeSimulatorPlayer<public>(InPlayer : player) : void =
 RemoveSimulatorPlayer<public>(InPlayer : player) : void =
     return
 
-#-------------------------------------------------------------------------------
-# BREAKABLE MANAGER - Gere PLUSIEURS props cassables
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW BREAKABLE - 1 Device = 1 Prop cassable
+#===============================================================================
+# Utilise prop_manipulator_device pour detecter les coups
+# Optionnel: material_parameter_controller pour affichage PV via materiau
 
-breakable_data := class:
-    var CurrentHealth : float = 0.0
-    var IsDestroyed : logic = false
-    var OriginalPosition : vector3 = vector3{}
-    var OriginalRotation : rotation = rotation{}
-    TheTrigger : trigger_device
-    TheProp : creative_prop
-    TheBillboard : billboard_device
-    TheVFX : vfx_spawner_device
-
-snow_breakables_manager<public> := class(creative_device):
-    @editable
-    Props : []creative_prop = array{}
+snow_breakable<public> := class(creative_device):
 
     @editable
-    DamageTriggers : []trigger_device = array{}
+    PropManipulator : prop_manipulator_device = prop_manipulator_device{}
 
     @editable
-    HealthBillboards : []billboard_device = array{}
+    DestroyVFX : vfx_spawner_device = vfx_spawner_device{}
+
+    # Affichage PV - Choisir billboard OU material controller
+    @editable
+    HealthBillboard : ?billboard_device = false
 
     @editable
-    DestroyVFXs : []vfx_spawner_device = array{}
+    HealthMaterialController : ?material_parameter_controller_device = false
+
+    # Stats configurables par instance
+    @editable
+    MaxHealth : float = 100.0
 
     @editable
-    BaseHealth : float = 100.0
-
-    @editable
-    BaseReward : float = 10.0
+    SnowReward : float = 10.0
 
     @editable
     XPReward : float = 5.0
@@ -345,87 +338,70 @@ snow_breakables_manager<public> := class(creative_device):
     @editable
     RespawnTime : float = 5.0
 
-    var BreakableStates : []breakable_data = array{}
+    var CurrentHealth : float = 0.0
+    var IsDestroyed : logic = false
 
     HealthMsg<localizes>(HP : int, MaxHP : int) : message = "{HP}/{MaxHP}"
 
     OnBegin<override>()<suspends> : void =
-        InitializeAllBreakables()
+        set CurrentHealth = MaxHealth
+        PropManipulator.DamagedEvent.Subscribe(OnDamaged)
+        UpdateHealthDisplay()
 
-    InitializeAllBreakables() : void =
-        var Index : int = 0
-        for (Prop : Props):
-            if (Trigger := DamageTriggers[Index]):
-                if (Billboard := HealthBillboards[Index]):
-                    if (VFX := DestroyVFXs[Index]):
-                        NewState := breakable_data:
-                            TheTrigger := Trigger
-                            TheProp := Prop
-                            TheBillboard := Billboard
-                            TheVFX := VFX
-                        set NewState.CurrentHealth = BaseHealth
-                        set NewState.OriginalPosition = Prop.GetTransform().Translation
-                        set NewState.OriginalRotation = Prop.GetTransform().Rotation
-                        set BreakableStates = BreakableStates + array{NewState}
-                        Trigger.TriggeredEvent.Subscribe(OnAnyDamage)
-                        UpdateHealthDisplayFor(NewState)
-            set Index = Index + 1
-
-    OnAnyDamage(MaybeAgent : ?agent) : void =
-        if (Agent := MaybeAgent?):
+    OnDamaged(Agent : agent) : void =
+        if (not IsDestroyed?):
             if (InPlayer := player[Agent]):
-                var Handled : logic = false
-                for (State : BreakableStates):
-                    if (not Handled?):
-                        if (not State.IsDestroyed?):
-                            DamageAmount := CalculateDamageForPlayer(InPlayer)
-                            set State.CurrentHealth = State.CurrentHealth - DamageAmount
-                            UpdateHealthDisplayFor(State)
-                            if (State.CurrentHealth <= 0.0):
-                                DestroyBreakableFor(State, InPlayer)
-                            set Handled = true
+                DamageAmount := CalculateDamageForPlayer(InPlayer)
+                set CurrentHealth = CurrentHealth - DamageAmount
+                UpdateHealthDisplay()
+                if (CurrentHealth <= 0.0):
+                    DestroyBreakable(InPlayer)
 
-    DestroyBreakableFor(State : breakable_data, InPlayer : player) : void =
-        set State.IsDestroyed = true
-        GainSnowForPlayer(InPlayer, BaseReward)
+    DestroyBreakable(InPlayer : player) : void =
+        set IsDestroyed = true
+        GainSnowForPlayer(InPlayer, SnowReward)
         GainXPForPlayer(InPlayer, XPReward)
-        State.TheVFX.Restart()
-        HidePosition := State.OriginalPosition - vector3{Z := 10000.0}
-        if (State.TheProp.TeleportTo[HidePosition, State.OriginalRotation]) {}
-        spawn{RespawnBreakableFor(State)}
+        DestroyVFX.Restart()
+        PropManipulator.HideProps()
+        spawn{RespawnBreakable()}
 
-    RespawnBreakableFor(State : breakable_data)<suspends> : void =
+    RespawnBreakable()<suspends> : void =
         Sleep(RespawnTime)
-        set State.CurrentHealth = BaseHealth
-        set State.IsDestroyed = false
-        if (State.TheProp.TeleportTo[State.OriginalPosition, State.OriginalRotation]) {}
-        UpdateHealthDisplayFor(State)
+        set CurrentHealth = MaxHealth
+        set IsDestroyed = false
+        PropManipulator.ShowProps()
+        UpdateHealthDisplay()
 
-    UpdateHealthDisplayFor(State : breakable_data) : void =
-        if (HP := Int[State.CurrentHealth]):
-            if (MaxHP := Int[BaseHealth]):
-                State.TheBillboard.SetText(HealthMsg(HP, MaxHP))
+    UpdateHealthDisplay() : void =
+        if (HP := Int[CurrentHealth]):
+            if (MaxHP := Int[MaxHealth]):
+                # Option 1: Billboard
+                if (BB := HealthBillboard?):
+                    BB.SetText(HealthMsg(HP, MaxHP))
+                # Option 2: Material controller (valeur 0.0 a 1.0)
+                if (MC := HealthMaterialController?):
+                    HealthPercent := CurrentHealth / MaxHealth
+                    MC.SetScalarParameterValue(HealthPercent)
 
-#-------------------------------------------------------------------------------
-# EGG STATIONS MANAGER - Gere PLUSIEURS stations d oeufs
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW EGG STATION - 1 Device = 1 Station d'oeufs
+#===============================================================================
 
-egg_station_data := class:
-    var IsHatching : logic = false
-    TheButton : button_device
-    TheBillboard : billboard_device
-    TheVFX : vfx_spawner_device
-
-snow_egg_stations_manager<public> := class(creative_device):
-    @editable
-    PurchaseButtons : []button_device = array{}
+snow_egg_station<public> := class(creative_device):
 
     @editable
-    CostBillboards : []billboard_device = array{}
+    PurchaseButton : button_device = button_device{}
 
     @editable
-    HatchVFXs : []vfx_spawner_device = array{}
+    HatchVFX : vfx_spawner_device = vfx_spawner_device{}
 
+    @editable
+    CostBillboard : ?billboard_device = false
+
+    @editable
+    ResultHUD : ?hud_message_device = false
+
+    # Stats configurables
     @editable
     EggCost : float = 100.0
 
@@ -445,49 +421,36 @@ snow_egg_stations_manager<public> := class(creative_device):
     MythicChance : float = 0.01
 
     @editable
-    ResultHUD : ?hud_message_device = false
+    HatchDuration : float = 2.0
 
-    var StationStates : []egg_station_data = array{}
+    var IsHatching : logic = false
 
     CostMsg<localizes>(Amount : float) : message = "Cost: {Amount} Snow"
     HatchingMsg<localizes> : message = "Hatching..."
     ResultMsg<localizes>(RarityStr : string) : message = "You got a {RarityStr} pet!"
 
     OnBegin<override>()<suspends> : void =
-        var Index : int = 0
-        for (Button : PurchaseButtons):
-            if (Billboard := CostBillboards[Index]):
-                if (VFX := HatchVFXs[Index]):
-                    NewState := egg_station_data:
-                        TheButton := Button
-                        TheBillboard := Billboard
-                        TheVFX := VFX
-                    set StationStates = StationStates + array{NewState}
-                    Billboard.SetText(CostMsg(EggCost))
-                    Button.InteractedWithEvent.Subscribe(OnAnyPurchase)
-            set Index = Index + 1
+        if (BB := CostBillboard?):
+            BB.SetText(CostMsg(EggCost))
+        PurchaseButton.InteractedWithEvent.Subscribe(OnPurchase)
 
-    OnAnyPurchase(Agent : agent) : void =
-        var Handled : logic = false
-        for (State : StationStates):
-            if (not Handled?):
-                if (not State.IsHatching?):
-                    if (InPlayer := player[Agent]):
-                        if (TryRemoveSnow[InPlayer, EggCost]):
-                            spawn{PerformHatchFor(State, InPlayer)}
-                            set Handled = true
+    OnPurchase(Agent : agent) : void =
+        if (not IsHatching?):
+            if (InPlayer := player[Agent]):
+                if (TryRemoveSnow[InPlayer, EggCost]):
+                    spawn{PerformHatch(InPlayer)}
 
-    PerformHatchFor(State : egg_station_data, InPlayer : player)<suspends> : void =
-        set State.IsHatching = true
-        State.TheBillboard.SetText(HatchingMsg)
-        State.TheVFX.Restart()
-        Sleep(2.0)
+    PerformHatch(InPlayer : player)<suspends> : void =
+        set IsHatching = true
+        if (BB := CostBillboard?):
+            BB.SetText(HatchingMsg)
+        HatchVFX.Restart()
+        Sleep(HatchDuration)
 
         Roll := GetRandomFloat(0.0, 1.0)
         var SelectedRarity : pet_rarity = pet_rarity.Common
-        var Cumulative : float = 0.0
+        var Cumulative : float = MythicChance
 
-        set Cumulative = MythicChance
         if (Roll <= Cumulative):
             set SelectedRarity = pet_rarity.Mythic
         else:
@@ -511,176 +474,110 @@ snow_egg_stations_manager<public> := class(creative_device):
             HUD.SetText(ResultMsg(RarityStr))
             HUD.Show(InPlayer)
 
-        set State.IsHatching = false
-        State.TheBillboard.SetText(CostMsg(EggCost))
+        set IsHatching = false
+        if (BB := CostBillboard?):
+            BB.SetText(CostMsg(EggCost))
 
-#-------------------------------------------------------------------------------
-# ZONE GATES MANAGER - Gere PLUSIEURS portes de zone
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW ZONE GATE - 1 Device = 1 Porte de zone
+#===============================================================================
 
-zone_gate_data := class:
+snow_zone_gate<public> := class(creative_device):
+
+    @editable
+    UnlockButton : button_device = button_device{}
+
+    @editable
+    GateProp : creative_prop = creative_prop{}
+
+    @editable
+    UnlockVFX : vfx_spawner_device = vfx_spawner_device{}
+
+    @editable
+    InfoBillboard : ?billboard_device = false
+
+    @editable
+    TeleportOnUnlock : ?teleporter_device = false
+
+    # Stats configurables
+    @editable
+    ZoneID : int = 1
+
+    @editable
+    UnlockCost : float = 1000.0
+
+    @editable
+    RequiredLevel : int = 5
+
     var IsUnlocked : logic = false
     var OriginalPosition : vector3 = vector3{}
-    ZoneID : int
-    UnlockCost : float
-    RequiredLevel : int
-    TheButton : button_device
-    TheProp : creative_prop
-    TheBillboard : billboard_device
-    TheVFX : vfx_spawner_device
-    TheTeleporter : teleporter_device
-
-snow_zone_gates_manager<public> := class(creative_device):
-    @editable
-    ZoneIDs : []int = array{}
-
-    @editable
-    UnlockCosts : []float = array{}
-
-    @editable
-    RequiredLevels : []int = array{}
-
-    @editable
-    GateProps : []creative_prop = array{}
-
-    @editable
-    UnlockButtons : []button_device = array{}
-
-    @editable
-    InfoBillboards : []billboard_device = array{}
-
-    @editable
-    UnlockVFXs : []vfx_spawner_device = array{}
-
-    @editable
-    TeleportOnUnlocks : []teleporter_device = array{}
-
-    var GateStates : []zone_gate_data = array{}
 
     CostInfoMsg<localizes>(SnowCost : float, LvlReq : int) : message = "Cost: {SnowCost} | Level {LvlReq}"
     UnlockedInfoMsg<localizes> : message = "UNLOCKED"
     LockedInfoMsg<localizes> : message = "Requirements not met!"
 
     OnBegin<override>()<suspends> : void =
-        var Index : int = 0
-        for (Button : UnlockButtons):
-            if (Prop := GateProps[Index]):
-                if (Billboard := InfoBillboards[Index]):
-                    if (VFX := UnlockVFXs[Index]):
-                        if (Teleporter := TeleportOnUnlocks[Index]):
-                            var TheZoneID : int = Index
-                            var TheCost : float = 1000.0
-                            var TheReqLevel : int = 5
-
-                            if (Z := ZoneIDs[Index]):
-                                set TheZoneID = Z
-                            if (C := UnlockCosts[Index]):
-                                set TheCost = C
-                            if (L := RequiredLevels[Index]):
-                                set TheReqLevel = L
-
-                            NewState := zone_gate_data:
-                                ZoneID := TheZoneID
-                                UnlockCost := TheCost
-                                RequiredLevel := TheReqLevel
-                                TheButton := Button
-                                TheProp := Prop
-                                TheBillboard := Billboard
-                                TheVFX := VFX
-                                TheTeleporter := Teleporter
-                            set NewState.OriginalPosition = Prop.GetTransform().Translation
-                            set GateStates = GateStates + array{NewState}
-                            Billboard.SetText(CostInfoMsg(TheCost, TheReqLevel))
-                            Button.InteractedWithEvent.Subscribe(OnAnyUnlockAttempt)
-            set Index = Index + 1
+        set OriginalPosition = GateProp.GetTransform().Translation
+        if (BB := InfoBillboard?):
+            BB.SetText(CostInfoMsg(UnlockCost, RequiredLevel))
+        UnlockButton.InteractedWithEvent.Subscribe(OnUnlockAttempt)
 
         for (InPlayer : GetPlayspace().GetPlayers()):
-            CheckAllPlayerUnlocks(InPlayer)
-        GetPlayspace().PlayerAddedEvent().Subscribe(CheckAllPlayerUnlocks)
+            CheckPlayerUnlock(InPlayer)
+        GetPlayspace().PlayerAddedEvent().Subscribe(CheckPlayerUnlock)
 
-    OnAnyUnlockAttempt(Agent : agent) : void =
-        if (InPlayer := player[Agent]):
-            var Handled : logic = false
-            for (State : GateStates):
-                if (not Handled?):
-                    if (not State.IsUnlocked?):
-                        PlayerLevel := GetLevel(InPlayer)
-                        if (PlayerLevel >= State.RequiredLevel):
-                            if (TryRemoveSnow[InPlayer, State.UnlockCost]):
-                                AddUnlockedZone(InPlayer, State.ZoneID)
-                                UnlockGateFor(State, InPlayer)
-                                set Handled = true
-                        else:
-                            State.TheBillboard.SetText(LockedInfoMsg)
-                            spawn{ResetInfoDisplayFor(State)}
-                            set Handled = true
+    OnUnlockAttempt(Agent : agent) : void =
+        if (not IsUnlocked?):
+            if (InPlayer := player[Agent]):
+                PlayerLevel := GetLevel(InPlayer)
+                if (PlayerLevel >= RequiredLevel):
+                    if (TryRemoveSnow[InPlayer, UnlockCost]):
+                        AddUnlockedZone(InPlayer, ZoneID)
+                        UnlockGate(InPlayer)
+                else:
+                    if (BB := InfoBillboard?):
+                        BB.SetText(LockedInfoMsg)
+                    spawn{ResetInfoDisplay()}
 
-    CheckAllPlayerUnlocks(InPlayer : player) : void =
-        for (State : GateStates):
-            if (IsZoneUnlocked[InPlayer, State.ZoneID]):
-                OpenGateFor(State)
+    CheckPlayerUnlock(InPlayer : player) : void =
+        if (IsZoneUnlocked[InPlayer, ZoneID]):
+            OpenGate()
 
-    UnlockGateFor(State : zone_gate_data, InPlayer : player) : void =
-        set State.IsUnlocked = true
-        State.TheVFX.Restart()
-        OpenGateFor(State)
-        State.TheTeleporter.Teleport(InPlayer)
+    UnlockGate(InPlayer : player) : void =
+        set IsUnlocked = true
+        UnlockVFX.Restart()
+        OpenGate()
+        if (TP := TeleportOnUnlock?):
+            TP.Teleport(InPlayer)
 
-    OpenGateFor(State : zone_gate_data) : void =
-        HidePos := State.OriginalPosition - vector3{Z := 10000.0}
-        if (State.TheProp.TeleportTo[HidePos, State.TheProp.GetTransform().Rotation]) {}
-        State.TheBillboard.SetText(UnlockedInfoMsg)
+    OpenGate() : void =
+        HidePos := OriginalPosition - vector3{Z := 10000.0}
+        if (GateProp.TeleportTo[HidePos, GateProp.GetTransform().Rotation]) {}
+        if (BB := InfoBillboard?):
+            BB.SetText(UnlockedInfoMsg)
 
-    ResetInfoDisplayFor(State : zone_gate_data)<suspends> : void =
+    ResetInfoDisplay()<suspends> : void =
         Sleep(2.0)
-        State.TheBillboard.SetText(CostInfoMsg(State.UnlockCost, State.RequiredLevel))
+        if (BB := InfoBillboard?):
+            BB.SetText(CostInfoMsg(UnlockCost, RequiredLevel))
 
-#-------------------------------------------------------------------------------
-# REBIRTH SHRINES MANAGER - Gere PLUSIEURS shrines de prestige
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW REBIRTH SHRINE - 1 Device = 1 Shrine de prestige
+#===============================================================================
 
-rebirth_shrine_data := class:
-    RebirthLevel : int
-    RequiredSnow : float
-    RequiredPlayerLevel : int
-    DamageBonus : float
-    SpeedBonus : float
-    CurrencyBonus : float
-    TheButton : button_device
-    TheCostBillboard : billboard_device
-    TheBonusBillboard : billboard_device
-    TheVFX : vfx_spawner_device
-
-snow_rebirth_shrines_manager<public> := class(creative_device):
-    @editable
-    RebirthLevels : []int = array{}
+snow_rebirth_shrine<public> := class(creative_device):
 
     @editable
-    RequiredSnows : []float = array{}
+    InteractButton : button_device = button_device{}
 
     @editable
-    RequiredPlayerLevels : []int = array{}
+    RebirthVFX : vfx_spawner_device = vfx_spawner_device{}
 
     @editable
-    DamageBonuses : []float = array{}
+    CostBillboard : ?billboard_device = false
 
     @editable
-    SpeedBonuses : []float = array{}
-
-    @editable
-    CurrencyBonuses : []float = array{}
-
-    @editable
-    InteractButtons : []button_device = array{}
-
-    @editable
-    CostDisplayBillboards : []billboard_device = array{}
-
-    @editable
-    BonusDisplayBillboards : []billboard_device = array{}
-
-    @editable
-    RebirthVFXs : []vfx_spawner_device = array{}
+    BonusBillboard : ?billboard_device = false
 
     @editable
     SuccessHUD : ?hud_message_device = false
@@ -688,7 +585,24 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
     @editable
     TeleportAfter : ?teleporter_device = false
 
-    var ShrineStates : []rebirth_shrine_data = array{}
+    # Stats configurables
+    @editable
+    RebirthLevel : int = 1
+
+    @editable
+    RequiredSnow : float = 50000.0
+
+    @editable
+    RequiredPlayerLevel : int = 25
+
+    @editable
+    DamageBonus : float = 25.0
+
+    @editable
+    SpeedBonus : float = 10.0
+
+    @editable
+    CurrencyBonus : float = 15.0
 
     RebirthCostMsg<localizes>(SnowCost : float, LvlReq : int) : message = "Cost: {SnowCost} | Level {LvlReq}"
     RebirthBonusMsg<localizes>(DMG : float, SPD : float, CURR : float) : message = "+{DMG}% DMG | +{SPD}% Speed | +{CURR}% Snow"
@@ -696,132 +610,81 @@ snow_rebirth_shrines_manager<public> := class(creative_device):
     RebirthFailMsg<localizes> : message = "Requirements not met!"
 
     OnBegin<override>()<suspends> : void =
-        var Index : int = 0
-        for (Button : InteractButtons):
-            if (CostBB := CostDisplayBillboards[Index]):
-                if (BonusBB := BonusDisplayBillboards[Index]):
-                    if (VFX := RebirthVFXs[Index]):
-                        var TheLevel : int = Index + 1
-                        var TheReqSnow : float = 50000.0
-                        var TheReqLevel : int = 25
-                        var TheDmgBonus : float = 25.0
-                        var TheSpdBonus : float = 10.0
-                        var TheCurrBonus : float = 15.0
+        if (CostBB := CostBillboard?):
+            CostBB.SetText(RebirthCostMsg(RequiredSnow, RequiredPlayerLevel))
+        if (BonusBB := BonusBillboard?):
+            BonusBB.SetText(RebirthBonusMsg(DamageBonus, SpeedBonus, CurrencyBonus))
+        InteractButton.InteractedWithEvent.Subscribe(OnRebirthAttempt)
 
-                        if (L := RebirthLevels[Index]):
-                            set TheLevel = L
-                        if (S := RequiredSnows[Index]):
-                            set TheReqSnow = S
-                        if (RL := RequiredPlayerLevels[Index]):
-                            set TheReqLevel = RL
-                        if (D := DamageBonuses[Index]):
-                            set TheDmgBonus = D
-                        if (SP := SpeedBonuses[Index]):
-                            set TheSpdBonus = SP
-                        if (C := CurrencyBonuses[Index]):
-                            set TheCurrBonus = C
-
-                        NewState := rebirth_shrine_data:
-                            RebirthLevel := TheLevel
-                            RequiredSnow := TheReqSnow
-                            RequiredPlayerLevel := TheReqLevel
-                            DamageBonus := TheDmgBonus
-                            SpeedBonus := TheSpdBonus
-                            CurrencyBonus := TheCurrBonus
-                            TheButton := Button
-                            TheCostBillboard := CostBB
-                            TheBonusBillboard := BonusBB
-                            TheVFX := VFX
-                        set ShrineStates = ShrineStates + array{NewState}
-                        CostBB.SetText(RebirthCostMsg(TheReqSnow, TheReqLevel))
-                        BonusBB.SetText(RebirthBonusMsg(TheDmgBonus, TheSpdBonus, TheCurrBonus))
-                        Button.InteractedWithEvent.Subscribe(OnAnyRebirthAttempt)
-            set Index = Index + 1
-
-    OnAnyRebirthAttempt(Agent : agent) : void =
+    OnRebirthAttempt(Agent : agent) : void =
         if (InPlayer := player[Agent]):
-            var Handled : logic = false
-            for (State : ShrineStates):
-                if (not Handled?):
-                    CurrentRebirths := GetRebirthCount(InPlayer)
-                    CurrentLevel := GetLevel(InPlayer)
-                    CurrentSnow := GetSnow(InPlayer)
+            CurrentRebirths := GetRebirthCount(InPlayer)
+            CurrentLevel := GetLevel(InPlayer)
+            CurrentSnow := GetSnow(InPlayer)
 
-                    if (CurrentRebirths < State.RebirthLevel):
-                        ExpectedRebirths := State.RebirthLevel - 1
-                        if (CurrentRebirths = ExpectedRebirths):
-                            if (CurrentLevel >= State.RequiredPlayerLevel):
-                                if (CurrentSnow >= State.RequiredSnow):
-                                    DoRebirth(InPlayer, State.DamageBonus, State.SpeedBonus, State.CurrencyBonus)
-                                    State.TheVFX.Restart()
-                                    if (HUD := SuccessHUD?):
-                                        HUD.SetText(RebirthSuccessMsg(State.RebirthLevel))
-                                        HUD.Show(InPlayer)
-                                    if (TP := TeleportAfter?):
-                                        TP.Teleport(InPlayer)
-                                    set Handled = true
-                                else:
-                                    State.TheCostBillboard.SetText(RebirthFailMsg)
-                                    spawn{ResetRebirthDisplayFor(State)}
-                                    set Handled = true
-                            else:
-                                State.TheCostBillboard.SetText(RebirthFailMsg)
-                                spawn{ResetRebirthDisplayFor(State)}
-                                set Handled = true
-                        else:
-                            State.TheCostBillboard.SetText(RebirthFailMsg)
-                            spawn{ResetRebirthDisplayFor(State)}
-                            set Handled = true
+            ExpectedRebirths := RebirthLevel - 1
+            if (CurrentRebirths = ExpectedRebirths):
+                if (CurrentLevel >= RequiredPlayerLevel):
+                    if (CurrentSnow >= RequiredSnow):
+                        DoRebirth(InPlayer, DamageBonus, SpeedBonus, CurrencyBonus)
+                        RebirthVFX.Restart()
+                        if (HUD := SuccessHUD?):
+                            HUD.SetText(RebirthSuccessMsg(RebirthLevel))
+                            HUD.Show(InPlayer)
+                        if (TP := TeleportAfter?):
+                            TP.Teleport(InPlayer)
+                    else:
+                        ShowFailMessage()
+                else:
+                    ShowFailMessage()
+            else:
+                ShowFailMessage()
 
-    ResetRebirthDisplayFor(State : rebirth_shrine_data)<suspends> : void =
+    ShowFailMessage() : void =
+        if (CostBB := CostBillboard?):
+            CostBB.SetText(RebirthFailMsg)
+        spawn{ResetDisplay()}
+
+    ResetDisplay()<suspends> : void =
         Sleep(2.0)
-        State.TheCostBillboard.SetText(RebirthCostMsg(State.RequiredSnow, State.RequiredPlayerLevel))
+        if (CostBB := CostBillboard?):
+            CostBB.SetText(RebirthCostMsg(RequiredSnow, RequiredPlayerLevel))
 
-#-------------------------------------------------------------------------------
-# UPGRADE STATIONS MANAGER - Gere PLUSIEURS stations d upgrade
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW UPGRADE STATION - 1 Device = 1 Station d'upgrade
+#===============================================================================
 
-upgrade_station_data := class:
+snow_upgrade_station<public> := class(creative_device):
+
+    @editable
+    PurchaseButton : button_device = button_device{}
+
+    @editable
+    UpgradeVFX : vfx_spawner_device = vfx_spawner_device{}
+
+    @editable
+    NameBillboard : ?billboard_device = false
+
+    @editable
+    LevelBillboard : ?billboard_device = false
+
+    @editable
+    CostBillboard : ?billboard_device = false
+
+    # Stats configurables
+    @editable
+    UpgradeName : string = "Damage"
+
+    @editable
+    BaseCost : float = 50.0
+
+    @editable
+    CostMultiplier : float = 1.15
+
+    @editable
+    MaxLevel : int = 100
+
     var CurrentLevel : int = 0
-    UpgradeName : string
-    BaseCost : float
-    CostMult : float
-    MaxLevel : int
-    TheButton : button_device
-    TheNameBillboard : billboard_device
-    TheLevelBillboard : billboard_device
-    TheCostBillboard : billboard_device
-    TheVFX : vfx_spawner_device
-
-snow_upgrade_stations_manager<public> := class(creative_device):
-    @editable
-    UpgradeNames : []string = array{}
-
-    @editable
-    BaseCosts : []float = array{}
-
-    @editable
-    CostMultipliers : []float = array{}
-
-    @editable
-    MaxLevels : []int = array{}
-
-    @editable
-    PurchaseButtons : []button_device = array{}
-
-    @editable
-    NameBillboards : []billboard_device = array{}
-
-    @editable
-    LevelBillboards : []billboard_device = array{}
-
-    @editable
-    CostBillboards : []billboard_device = array{}
-
-    @editable
-    UpgradeVFXs : []vfx_spawner_device = array{}
-
-    var UpgradeStates : []upgrade_station_data = array{}
 
     UpgradeNameMsg<localizes>(TheName : string) : message = "{TheName}"
     UpgradeLevelMsg<localizes>(Lvl : int) : message = "Level: {Lvl}"
@@ -830,84 +693,51 @@ snow_upgrade_stations_manager<public> := class(creative_device):
     UpgradeFailMsg<localizes> : message = "Not enough Snow!"
 
     OnBegin<override>()<suspends> : void =
-        var Index : int = 0
-        for (Button : PurchaseButtons):
-            if (NameBB := NameBillboards[Index]):
-                if (LevelBB := LevelBillboards[Index]):
-                    if (CostBB := CostBillboards[Index]):
-                        if (VFX := UpgradeVFXs[Index]):
-                            var TheName : string = "Upgrade"
-                            var TheBaseCost : float = 50.0
-                            var TheCostMult : float = 1.15
-                            var TheMaxLevel : int = 100
+        if (NameBB := NameBillboard?):
+            NameBB.SetText(UpgradeNameMsg(UpgradeName))
+        UpdateDisplay()
+        PurchaseButton.InteractedWithEvent.Subscribe(OnPurchase)
 
-                            if (N := UpgradeNames[Index]):
-                                set TheName = N
-                            if (C := BaseCosts[Index]):
-                                set TheBaseCost = C
-                            if (M := CostMultipliers[Index]):
-                                set TheCostMult = M
-                            if (L := MaxLevels[Index]):
-                                set TheMaxLevel = L
+    OnPurchase(Agent : agent) : void =
+        if (CurrentLevel < MaxLevel):
+            if (InPlayer := player[Agent]):
+                TheCost := CalculateCost()
+                if (TryRemoveSnow[InPlayer, TheCost]):
+                    set CurrentLevel = CurrentLevel + 1
+                    UpgradeVFX.Restart()
+                    UpdateDisplay()
+                else:
+                    if (CostBB := CostBillboard?):
+                        CostBB.SetText(UpgradeFailMsg)
+                    spawn{ResetCostDisplay()}
 
-                            NewState := upgrade_station_data:
-                                UpgradeName := TheName
-                                BaseCost := TheBaseCost
-                                CostMult := TheCostMult
-                                MaxLevel := TheMaxLevel
-                                TheButton := Button
-                                TheNameBillboard := NameBB
-                                TheLevelBillboard := LevelBB
-                                TheCostBillboard := CostBB
-                                TheVFX := VFX
-                            set UpgradeStates = UpgradeStates + array{NewState}
-                            NameBB.SetText(UpgradeNameMsg(TheName))
-                            UpdateUpgradeDisplayFor(NewState)
-                            Button.InteractedWithEvent.Subscribe(OnAnyUpgradePurchase)
-            set Index = Index + 1
-
-    OnAnyUpgradePurchase(Agent : agent) : void =
-        if (InPlayer := player[Agent]):
-            var Handled : logic = false
-            for (State : UpgradeStates):
-                if (not Handled?):
-                    if (State.CurrentLevel < State.MaxLevel):
-                        TheCost := CalculateCostFor(State)
-                        if (TryRemoveSnow[InPlayer, TheCost]):
-                            set State.CurrentLevel = State.CurrentLevel + 1
-                            State.TheVFX.Restart()
-                            UpdateUpgradeDisplayFor(State)
-                            set Handled = true
-                        else:
-                            State.TheCostBillboard.SetText(UpgradeFailMsg)
-                            spawn{ResetUpgradeCostDisplayFor(State)}
-                            set Handled = true
-
-    CalculateCostFor(State : upgrade_station_data) : float =
-        var Result : float = State.BaseCost
+    CalculateCost() : float =
+        var Result : float = BaseCost
         var I : int = 0
         loop:
-            if (I >= State.CurrentLevel):
+            if (I >= CurrentLevel):
                 break
-            set Result = Result * State.CostMult
+            set Result = Result * CostMultiplier
             set I = I + 1
         Result
 
-    UpdateUpgradeDisplayFor(State : upgrade_station_data) : void =
-        State.TheLevelBillboard.SetText(UpgradeLevelMsg(State.CurrentLevel))
-        if (State.CurrentLevel >= State.MaxLevel):
-            State.TheCostBillboard.SetText(UpgradeMaxedMsg)
-        else:
-            TheCost := CalculateCostFor(State)
-            State.TheCostBillboard.SetText(UpgradeCostMsg(TheCost))
+    UpdateDisplay() : void =
+        if (LevelBB := LevelBillboard?):
+            LevelBB.SetText(UpgradeLevelMsg(CurrentLevel))
+        if (CostBB := CostBillboard?):
+            if (CurrentLevel >= MaxLevel):
+                CostBB.SetText(UpgradeMaxedMsg)
+            else:
+                TheCost := CalculateCost()
+                CostBB.SetText(UpgradeCostMsg(TheCost))
 
-    ResetUpgradeCostDisplayFor(State : upgrade_station_data)<suspends> : void =
+    ResetCostDisplay()<suspends> : void =
         Sleep(1.5)
-        UpdateUpgradeDisplayFor(State)
+        UpdateDisplay()
 
-#-------------------------------------------------------------------------------
-# MAIN MANAGER - Device principal
-#-------------------------------------------------------------------------------
+#===============================================================================
+# SNOW SIMULATOR MAIN - Device principal (initialisation joueurs)
+#===============================================================================
 
 snow_simulator_main<public> := class(creative_device):
 
