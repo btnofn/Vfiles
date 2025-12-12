@@ -5,6 +5,9 @@ using { /Fortnite.com/Characters }
 using { /Fortnite.com/Game }
 using { /UnrealEngine.com/Temporary/Diagnostics }
 using { /UnrealEngine.com/Temporary/SpatialMath }
+using { /UnrealEngine.com/Temporary/UI }
+using { /Fortnite.com/UI }
+using { /Verse.org/Colors/NamedColors }
 
 #===============================================================================
 # SNOW SIMULATOR - Architecture Manager + Array
@@ -305,19 +308,35 @@ RemoveSimulatorPlayer<public>(InPlayer : player) : void =
     return
 
 #===============================================================================
-# FORWARD DECLARATION - Manager class
+# ICONS MODULE - Textures pour l'UI (importez vos propres textures)
 #===============================================================================
-# Note: Classes must be declared before they can be referenced
+
+Icons<public> := module:
+    # Importez vos textures depuis le Content Browser
+    # Exemple: SnowIcon : texture = import("/Game/UI/Icons/Snow.Snow")
+    SnowIcon<public> : texture = texture{}
+    LevelIcon<public> : texture = texture{}
+    XPIcon<public> : texture = texture{}
+    RebirthIcon<public> : texture = texture{}
+
+#===============================================================================
+# PLAYER UI DATA - Stockage des widgets par joueur
+#===============================================================================
+
+player_ui_data := class:
+    var SnowText : text_block = text_block{}
+    var LevelText : text_block = text_block{}
+    var XPText : text_block = text_block{}
+    var RebirthText : text_block = text_block{}
+    var Canvas : canvas = canvas{}
+
+var PlayerUIMap : weak_map(player, player_ui_data) = map{}
+
+#===============================================================================
+# MANAGER CLASS - Gestion principale avec UI Canvas
+#===============================================================================
 
 snow_simulator_manager := class(creative_device):
-    @editable
-    SnowHUD : hud_message_device = hud_message_device{}
-
-    @editable
-    LevelHUD : hud_message_device = hud_message_device{}
-
-    @editable
-    RebirthHUD : hud_message_device = hud_message_device{}
 
     @editable
     StartingSnow : float = 0.0
@@ -340,9 +359,11 @@ snow_simulator_manager := class(creative_device):
     @editable
     UpgradeStations : []snow_upgrade_config = array{}
 
-    MainSnowMsg<localizes>(Amount : string) : message = "Snow: {Amount}"
-    MainLevelMsg<localizes>(Lvl : int, XP : string, XPMax : string) : message = "Level {Lvl} | XP: {XP}/{XPMax}"
-    MainRebirthMsg<localizes>(Count : int) : message = "Rebirth: {Count}"
+    # Messages localisables pour l'UI
+    SnowMsg<localizes>(Amount : string) : message = "{Amount}"
+    LevelMsg<localizes>(Lvl : int) : message = "Lvl {Lvl}"
+    XPMsg<localizes>(XP : string, XPMax : string) : message = "{XP}/{XPMax}"
+    RebirthMsg<localizes>(Count : int) : message = "x{Count}"
 
     OnBegin<override>()<suspends> : void =
         Print("Snow Simulator Manager - Starting...")
@@ -390,6 +411,7 @@ snow_simulator_manager := class(creative_device):
 
     OnPlayerLeft(InPlayer : player) : void =
         RemoveSimulatorPlayer(InPlayer)
+        RemovePlayerUI(InPlayer)
 
     InitializeNewPlayer(InPlayer : player) : void =
         InitializeSimulatorPlayer(InPlayer)
@@ -400,31 +422,143 @@ snow_simulator_manager := class(creative_device):
         # Check zones for this player
         for (Gate : ZoneGates):
             Gate.CheckPlayerUnlock(InPlayer)
+        # Initialize UI for this player
+        InitiateUI(InPlayer)
+
+    RemovePlayerUI(InPlayer : player) : void =
+        # UI is automatically cleaned up when player leaves
+        return
+
+    # Cree le canvas UI pour un joueur
+    CreatePlayerUI(InPlayer : player) : player_ui_data =
+        # Creer les text_blocks avec style
+        NewSnowText := text_block:
+            DefaultTextColor := White
+            DefaultShadowOffset := option{vector2{X := 1.0, Y := 1.0}}
+            DefaultShadowColor := Black
+
+        NewLevelText := text_block:
+            DefaultTextColor := White
+            DefaultShadowOffset := option{vector2{X := 1.0, Y := 1.0}}
+            DefaultShadowColor := Black
+
+        NewXPText := text_block:
+            DefaultTextColor := White
+            DefaultShadowOffset := option{vector2{X := 1.0, Y := 1.0}}
+            DefaultShadowColor := Black
+
+        NewRebirthText := text_block:
+            DefaultTextColor := White
+            DefaultShadowOffset := option{vector2{X := 1.0, Y := 1.0}}
+            DefaultShadowColor := Black
+
+        # Creer les texture_blocks pour les icones
+        SnowIconWidget := texture_block:
+            DefaultImage := Icons.SnowIcon
+
+        LevelIconWidget := texture_block:
+            DefaultImage := Icons.LevelIcon
+
+        XPIconWidget := texture_block:
+            DefaultImage := Icons.XPIcon
+
+        RebirthIconWidget := texture_block:
+            DefaultImage := Icons.RebirthIcon
+
+        # Creer le canvas avec tous les slots
+        NewCanvas := canvas:
+            Slots := array:
+                # Snow Icon
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 20.0, Top := 0.0, Right := 40.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := SnowIconWidget
+                # Snow Text
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 70.0, Top := 0.0, Right := 150.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := NewSnowText
+                # Level Icon
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 20.0, Top := 50.0, Right := 40.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := LevelIconWidget
+                # Level Text
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 70.0, Top := 50.0, Right := 100.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := NewLevelText
+                # XP Icon
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 20.0, Top := 100.0, Right := 40.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := XPIconWidget
+                # XP Text
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 70.0, Top := 100.0, Right := 150.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := NewXPText
+                # Rebirth Icon
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 20.0, Top := 150.0, Right := 40.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := RebirthIconWidget
+                # Rebirth Text
+                canvas_slot:
+                    Anchors := anchors{Minimum := vector2{X := 0.0, Y := 0.5}, Maximum := vector2{X := 0.0, Y := 0.5}}
+                    Offsets := margin{Left := 70.0, Top := 150.0, Right := 100.0, Bottom := 40.0}
+                    Alignment := vector2{X := 0.0, Y := 0.5}
+                    Widget := NewRebirthText
+
+        # Retourner les donnees UI
+        player_ui_data:
+            SnowText := NewSnowText
+            LevelText := NewLevelText
+            XPText := NewXPText
+            RebirthText := NewRebirthText
+            Canvas := NewCanvas
+
+    # Initialise l'UI pour un joueur
+    InitiateUI(InPlayer : player) : void =
+        if (PlayerUI := GetPlayerUI[InPlayer]):
+            UIData := CreatePlayerUI(InPlayer)
+            PlayerUI.AddWidget(UIData.Canvas)
+            UIData.SnowText.SetShadowOpacity(1.0)
+            UIData.LevelText.SetShadowOpacity(1.0)
+            UIData.XPText.SetShadowOpacity(1.0)
+            UIData.RebirthText.SetShadowOpacity(1.0)
+            if (set PlayerUIMap[InPlayer] = UIData) {}
+            UpdateUIForPlayer(InPlayer)
 
     HUDUpdateLoop()<suspends> : void =
         loop:
             Sleep(HUDUpdateInterval)
             for (InPlayer : GetPlayspace().GetPlayers()):
-                UpdateHUDForPlayer(InPlayer)
+                UpdateUIForPlayer(InPlayer)
 
-    UpdateHUDForPlayer(InPlayer : player) : void =
-        CurrentSnow := GetSnow(InPlayer)
-        CurrentLevel := GetLevel(InPlayer)
-        CurrentXP := GetCurrentXP(InPlayer)
-        CurrentRebirths := GetRebirthCount(InPlayer)
+    UpdateUIForPlayer(InPlayer : player) : void =
+        if (UIData := PlayerUIMap[InPlayer]):
+            CurrentSnow := GetSnow(InPlayer)
+            CurrentLevel := GetLevel(InPlayer)
+            CurrentXP := GetCurrentXP(InPlayer)
+            CurrentRebirths := GetRebirthCount(InPlayer)
+            XPRequired := GetXPForLevel(CurrentLevel)
 
-        SnowFormatted := FormatNumber(CurrentSnow)
-        SnowHUD.SetText(MainSnowMsg(SnowFormatted))
-        SnowHUD.Show(InPlayer)
+            SnowFormatted := FormatNumber(CurrentSnow)
+            XPStr := FormatNumber(CurrentXP)
+            XPMaxStr := FormatNumber(XPRequired)
 
-        XPRequired := GetXPForLevel(CurrentLevel)
-        XPStr := FormatNumber(CurrentXP)
-        XPMaxStr := FormatNumber(XPRequired)
-        LevelHUD.SetText(MainLevelMsg(CurrentLevel, XPStr, XPMaxStr))
-        LevelHUD.Show(InPlayer)
-
-        RebirthHUD.SetText(MainRebirthMsg(CurrentRebirths))
-        RebirthHUD.Show(InPlayer)
+            UIData.SnowText.SetText(SnowMsg(SnowFormatted))
+            UIData.LevelText.SetText(LevelMsg(CurrentLevel))
+            UIData.XPText.SetText(XPMsg(XPStr, XPMaxStr))
+            UIData.RebirthText.SetText(RebirthMsg(CurrentRebirths))
 
 #===============================================================================
 # SNOW ENEMY CONFIG - Classe concrete pour les ennemis
